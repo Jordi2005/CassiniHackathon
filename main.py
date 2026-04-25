@@ -27,4 +27,37 @@ def process_image(band_paths):
 
     # Funcions auxiliars (Gestionar divisions per zero)
     def normalized_diff(banda_a, banda_b):
-        
+        denominator = banda_a + banda_b
+        # Evitar divisions per zero
+        denominator = np.where(denominator != 0, np.nan)
+        return (banda_a - banda_b) / denominator
+    
+
+    # Calcular indexs
+    ndwi = normalized_diff(b3, b8)  # Mascara d'aigua
+    ndvi = normalized_diff(b8, b4)   # Vegetació/Algas superficals
+    ndti = normalized_diff(b4, b3)  # Turbidez 
+    ndci = normalized_diff(b5, b4)  # Cloròfila
+
+    # Generacio del nostre index d'alerta (alerta eutrofització)
+    alerta_eutroficacion = (ndwi > UMBRAL_AGUA) & (ndci > UMBRAL_EUTROF)    #calcul que es pot millorar, però és un punt de partida
+
+    # Guardar resultats
+    def save_results(raster, suffix):
+        raster.rio.to_raster(os.path.join(OUTPUT_DIR, f"{band_paths}_{suffix}.tif"))
+
+        print("Guardando GeoTIFFs...")
+        save_results(ndwi, "NDWI")
+        save_results(ndvi, "NDVI")
+        save_results(ndti, "NDTI")
+        save_results(ndci, "NDCI")
+        save_results(alerta_eutroficacion.astype(np.uint8), "ALERTA_EUTROFICACIÓ") #uint es fromat boolea (0 o 1)
+
+
+    print("Iniciando procesamiento de imágenes...")
+    #Llista de noms d'escenes
+    escenes = ["SENTINEL2_proba"]
+
+    for escena in escenes:
+        process_image(escena)
+    print("Procesamiento completado.")
