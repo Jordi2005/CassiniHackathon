@@ -3,116 +3,125 @@ import rioxarray
 import xarray as xr
 import numpy as np
 import pandas as pd
-from datetime import datetime
+import rasterio
 
-# --- CONFIGURACIÓ ---
-RAW_BANDS_DIR = os.path.expanduser('~/CassiniHackathon/raw_bands_in/')
-OUTPUT_DIR = os.path.expanduser('~/CassiniHackathon/processed_images/')
+# --- CONFIGURACIÓ DE RUTES ---
+# Calcula la ruta on es troba aquest fitxer (main.py)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Rutes relatives
+RAW_BANDS_DIR = os.path.join(BASE_DIR, 'raw_bands_in')
+OUTPUT_DIR = os.path.join(BASE_DIR, 'processed_images')
 CSV_RESUM_PATH = os.path.join(OUTPUT_DIR, "results_resum.csv")
+
+# Crea la carpeta de sortida si no existeix
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-UMBRAL_AGUA = 0.0 # NDWI > 0 es aigua
-UMBRAL_EUTROF = 0.15 # NDCI > 0.15 es foco probable de eutrofización
+# Paràmetre 'a' per a la fórmula de l'EPI (Ajustar segons necessitats)
+CONST_A = 1.0
 
 def process_image(band_paths):
     print(f"\n--- Processant imatge Sentinel-2: {band_paths} ---")
 
-    # 1. Carregar les bandes de Sentinel-2
-    # Important: Assegureu-vos de descarregar el producte L2A (ja corregit atmosfèricament)
+    # 1. CARREGAR LES BANDES (Ara afegim la B02 necessària pel SABI)
     try:
-        b3 = rioxarray.open_rasterio(os.path.join(RAW_BANDS_DIR, f"{band_paths}_B03.jp2"), masked=True) # Verd
-        b4 = rioxarray.open_rasterio(os.path.join(RAW_BANDS_DIR, f"{band_paths}_B04.jp2"), masked=True) # Vermell
-        b5 = rioxarray.open_rasterio(os.path.join(RAW_BANDS_DIR, f"{band_paths}_B05.jp2"), masked=True) # Red Edge 1
-        b8 = rioxarray.open_rasterio(os.path.join(RAW_BANDS_DIR, f"{band_paths}_B08.jp2"), masked=True) # NIR
-    except FileNotFoundError as e:
-        print(f"Error: No s'han trobat les bandes per a: {band_paths}. {e}")
+        b2 = rioxarray.open_rasterio(os.path.join(RAW_BANDS_DIR, f"{band_paths}_B02_(Raw).tiff"), masked=True).squeeze()
+        b3 = rioxarray.open_rasterio(os.path.join(RAW_BANDS_DIR, f"{band_paths}_B03_(Raw).tiff"), masked=True).squeeze()
+        b4 = rioxarray.open_rasterio(os.path.join(RAW_BANDS_DIR, f"{band_paths}_B04_(Raw).tiff"), masked=True).squeeze()
+        b5 = rioxarray.open_rasterio(os.path.join(RAW_BANDS_DIR, f"{band_paths}_B05_(Raw).tiff"), masked=True).squeeze()
+        b8 = rioxarray.open_rasterio(os.path.join(RAW_BANDS_DIR, f"{band_paths}_B08_(Raw).tiff"), masked=True).squeeze()
+    except rasterio.errors.RasterioIOError as e:
+        print(f"Error: No s'han trobat totes les bandes per a: {band_paths}.")
+        print(f"RECORDA: Has de descarregar la banda B02 (Blau) de l'EO Browser per calcular el SABI!")
+        print(f"Detall de l'error: {e}")
         return
 
-    # 2. Alinear resolucions (CRÍTIC per a Sentinel-2)
-    # Les bandes 3, 4 i 8 són de 10m/píxel. La banda 5 és de 20m/píxel.
-    print("Alineant la resolució de la banda 5 (Red Edge)...")
+    # 2. CÀLCUL DELS ÍNDEXS
+    print("Calculant índexs avançats de qualitat de l'aigua...")
+    
+    # Assegurem que B05 s'ajusta a la resolució de la resta (per si es descarrega a 20m)
     b5 = b5.rio.reproject_match(b4)
 
-    # 3. Funció matemàtica segura
-    def normalized_diff(banda_a, banda_b):
-        num = banda_a - banda_b
-        den = banda_a + banda_b
-        return num / den.where(den != 0)
+    # Convertim a float32 per evitar errors de divisió per zero
+    b2 = b2.astype('float32')
+    b3 = b3.astype('float32')
+    b4 = b4.astype('float32')
+    b5 = b5.astype('float32')
+    b8 = b8.astype('float32')
 
-    # 4. Calcular índexs natius de Sentinel-2
-    print("Calculant índexs de qualitat de l'aigua...")
-    ndwi = normalized_diff(b3, b8)  # Màscara d'aigua
-    ndvi = normalized_diff(b8, b4)  # Vegetació / Alga superficial
-    ndti = normalized_diff(b4, b3)  # Terbolesa
-    ndci = normalized_diff(b5, b4)  # Clorofil·la-a (Indicador principal d'eutrofització)
+    # Fórmules base corregides
+    ndwi = (b3 - b8) / (b3 + b8)
+    ndvi = (b8 - b4) / (b8 + b4)
+    ndti = (b4 - b3) / (b4 + b3) 
+    ndci = (b5 - b4) / (b5 + b4) 
 
-    # 5. Generar Alerta
-    alerta_eutroficacion = (ndwi > UMBRAL_AGUA) & (ndci > UMBRAL_EUTROF)
-
-    # 6. Guardar TIFFs (Útils com a fons a QGIS)
-    def save_tif(raster, suffix):
-        ruta = os.path.join(OUTPUT_DIR, f"{band_paths}_{suffix}.tif")
-        raster.rio.to_raster(ruta)
-
-    print("Guardant GeoTIFFs...")
-    save_tif(ndwi, "NDWI")
-    save_tif(ndci, "NDCI")
-    save_tif(ndti, "NDTI")
-    save_tif(ndvi, "NDVI")
-    save_tif(alerta_eutroficacion.astype(np.uint8), "ALERTA_EUTROFICACIO")
-
-    # =========================================================================
-    # 7. EXPORTACIÓ ULTRA-OPTIMITZADA: NOMÉS PÍXELS EN ALERTA PER A QGIS
-    # =========================================================================
-    print("Generant CSV de punts crítics per a QGIS...")
+    # Fórmules Avançades de Modelització (Polinòmica i Superficial)
+    print("Modelant Clorofil·la-a (CHla) i Potencial d'Eutrofització (EPI)...")
     
-    # Agrupar totes les capes
-    ds_pixels = xr.Dataset({
-        'NDWI': ndwi,
-        'NDCI': ndci,
-        'NDTI': ndti,
-        'NDVI': ndvi,
-        'ALERTA': alerta_eutroficacion
+    # Concentració de Clorofil·la-a
+    chla = 826.57 * (ndci**3) - 176.43 * (ndci**2) + 19 * ndci + 4.071
+    
+    # Surface Algal Bloom Index (SABI)
+    sabi = ((b8 - b4) / (b8 + b4)) - ((b3 - b2) / (b3 + b2))
+    
+    # SABI Normalitzat
+    # Busquem el mínim i màxim real a la imatge per normalitzar entre 0 i 1
+    sabi_min = sabi.min()
+    sabi_max = sabi.max()
+    sabinorm = (sabi - sabi_min) / (sabi_max - sabi_min)
+    
+    # Eutrophication Potential Index (EPI)
+    epi = ((chla / 100) * (1 + CONST_A * sabinorm)) / (1 + ndti)
+
+    # 3. AGRUPAR I FILTRAR DADES
+    print("Aplicant màscares i extraient píxels d'alerta...")
+    ds = xr.Dataset({
+        'ndwi': ndwi,
+        'ndvi': ndvi,
+        'ndti': ndti,
+        'ndci': ndci,
+        'chla': chla,
+        'sabi': sabi,
+        'sabinorm': sabinorm,
+        'epi': epi
     })
 
-    # Convertir a taula
-    df_pixels = ds_pixels.to_dataframe().reset_index()
+    # --- UMBRALS DE DETECCIÓ ---
+    condicion_agua = ds['ndwi'] > 0.0     
+    
+    # Com que ara teniu paràmetres més pro, podeu fer saltar l'alerta amb el NDCI o amb el EPI
+    # Mantenim l'alerta si hi ha alta clorofil·la base (NDCI > 0.1)
+    condicion_alerta = ds['epi'] > 0.4   
+    
+    mascara_final = condicion_agua & condicion_alerta
 
-    # Netejar espais buits (fora de l'òrbita de la imatge)
-    df_pixels = df_pixels.dropna(subset=['NDWI'])
+    # Aplanem la imatge quedant-nos només amb els píxels en alerta
+    df_filtrado = ds.where(mascara_final, drop=True).to_dataframe().dropna().reset_index()
 
-    # FILTRE OPTIMITZAT: Quedar-nos exclusivament amb els píxels que són ALERTA
-    df_pixels_alerta = df_pixels[df_pixels['ALERTA'] == True]
+    if df_filtrado.empty:
+        print("Cap alerta detectada en aquesta imatge.")
+        return
 
-    # Guardar l'arxiu de punts minúscul i ràpid
-    csv_pixel_path = os.path.join(OUTPUT_DIR, f"{band_paths}_pixels_ALERTA_mapa.csv")
-    df_pixels_alerta.to_csv(csv_pixel_path, index=False)
-    print(f" -> Llest! S'han exportat {len(df_pixels_alerta)} punts d'alerta a {csv_pixel_path}")
-    # =========================================================================
+    # 4. PREPARAR EL FORMAT DEL CSV
+    # Incorporem TOTES les columnes necessàries usant les coordenades 'x' i 'y' separades per QGIS
+    columnes_csv = ['x', 'y', 'ndwi', 'ndvi', 'ndti', 'ndci', 'chla', 'sabi', 'sabinorm', 'epi']
+    df_final = df_filtrado[columnes_csv]
+    
+    # Afegim l'ID de la imatge
+    df_final.insert(0, 'imatge_id', band_paths)
 
-    # 8. Registre resum (per al panell de control)
-    bounds = b4.rio.bounds() # Utilitzem b4 com a referència espacial
-    center_lon = (bounds[0] + bounds[2]) / 2
-    center_lat = (bounds[1] + bounds[3]) / 2
+    # 5. GUARDAR AL CSV
+    df_final.to_csv(CSV_RESUM_PATH, mode='a', header=not os.path.exists(CSV_RESUM_PATH), index=False)
+    
+    print(f"S'han guardat {len(df_final)} píxels d'alerta al fitxer CSV amb la mètrica EPI.")
 
-    pixels_alerta = int(alerta_eutroficacion.sum().values)
-
-    dades = {
-        'id_imatge': band_paths,
-        'data_processament': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        'latitud_centre': center_lat,
-        'longitud_centre': center_lon,
-        'pixels_en_alerta': pixels_alerta,
-        'risc_global': 'ALT' if pixels_alerta > 1000 else ('MODERAT' if pixels_alerta > 100 else 'BAIX')
-    }
-
-    df_resum = pd.DataFrame([dades])
-    if not os.path.isfile(CSV_RESUM_PATH):
-        df_resum.to_csv(CSV_RESUM_PATH, index=False)
-    else:
-        df_resum.to_csv(CSV_RESUM_PATH, mode='a', header=False, index=False)
 
 if __name__ == "__main__":
-    escenes = ["SENTINEL2_proba"] # Poseu aquí els noms dels vostres arxius sense el _BXX.jp2
+    escenes = [
+        "2021-08-03-00:00_2021-08-03-23:59_Sentinel-2_L2A"
+    ]
+
     for escena in escenes:
         process_image(escena)
+        
+    print("Procés acabat!")
