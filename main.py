@@ -16,10 +16,13 @@ def process_image(band_paths):
 
     # Carregar les bandes necessàries
     try:
+        b4 = rioxarray.open_rasterio(os.path.join(RAW_BANDS_DIR, f"{band_paths}_B04.jp2"), masked=True)
         b7 = rioxarray.open_rasterio(os.path.join(RAW_BANDS_DIR, f"{band_paths}_B07.jp2"), masked=True)
+        b8 = rioxarray.open_rasterio(os.path.join(RAW_BANDS_DIR, f"{band_paths}_B08.jp2"), masked=True)
         b14 = rioxarray.open_rasterio(os.path.join(RAW_BANDS_DIR, f"{band_paths}_B14.jp2"), masked=True)
         b15 = rioxarray.open_rasterio(os.path.join(RAW_BANDS_DIR, f"{band_paths}_B15.jp2"), masked=True)
         b18 = rioxarray.open_rasterio(os.path.join(RAW_BANDS_DIR, f"{band_paths}_B18.jp2"), masked=True)
+        b27 = rioxarray.open_rasterio(os.path.join(RAW_BANDS_DIR, f"{band_paths}_B27.jp2"), masked=True)
         b28 = rioxarray.open_rasterio(os.path.join(RAW_BANDS_DIR, f"{band_paths}_B28.jp2"), masked=True)
         b21 = rioxarray.open_rasterio(os.path.join(RAW_BANDS_DIR, f"{band_paths}_B21.jp2"), masked=True)
 
@@ -48,6 +51,7 @@ def process_image(band_paths):
     ndvi = normalized_diff(b28, b15)   # Vegetació/Algas superficals
     ndti = normalized_diff(b14, b7)  # Turbidez 
     ndci = normalized_diff(b18, b15)  # Cloròfila
+    sabi = normalized_diff(b27, b15) - normalized_diff(b8, b4)  # Índice de algas superficiales (SABI)
     tbm = normalized2_diff(b15, b18, b21)  # Indice de clorofila tocho
 
 
