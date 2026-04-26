@@ -10,8 +10,8 @@ import rasterio
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Rutes relatives
-RAW_BANDS_DIR = os.path.join(BASE_DIR, 'raw_bands_in')
-OUTPUT_DIR = os.path.join(BASE_DIR, 'processed_images')
+RAW_BANDS_DIR = os.path.join(BASE_DIR, 'raw_bands_in_Tarragona')
+OUTPUT_DIR = os.path.join(BASE_DIR, 'processed_img_Tarragona')
 CSV_RESUM_PATH = os.path.join(OUTPUT_DIR, "results_resum.csv")
 
 # Crea la carpeta de sortida si no existeix
@@ -118,7 +118,7 @@ def process_image(band_paths):
 
 if __name__ == "__main__":
     escenes = [
-        "2021-08-03-00:00_2021-08-03-23:59_Sentinel-2_L2A"
+        "2024-11-27-00:00_2024-11-27-23:59_Sentinel-2_L2A"
     ]
 
     for escena in escenes:
